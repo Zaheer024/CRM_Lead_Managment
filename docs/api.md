@@ -7,7 +7,10 @@ endpoint requires a Bearer token.
 Authorization: Bearer <token>
 ```
 
-Base URL: `http://localhost:8000/api`
+Base URL: `http://localhost/CRM_Lead_Managment/api`
+
+> Serving with `php artisan serve` instead? Use `http://localhost:8000/api` as
+> your base URL — every example below works the same way, just swap the prefix.
 
 ---
 

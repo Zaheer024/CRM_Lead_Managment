@@ -1,9 +1,9 @@
 # CRM Lead Management System
 
 A small CRM Lead Management System for an insurance/finance company built with
-**Laravel 12** and **SQLite**. Sales employees can manage leads from creation
-through conversion or closure, with role-based access for `ADMIN` and `SALES`
-users.
+**Laravel 12** (MySQL in development, in-memory SQLite for tests). Sales
+employees can manage leads from creation through conversion or closure, with
+role-based access for `ADMIN` and `SALES` users.
 
 ## Table of Contents
 
@@ -24,7 +24,7 @@ users.
 | Concern      | Technology                                  |
 | ------------ | ------------------------------------------- |
 | Framework    | Laravel 12 (PHP >= 8.2)                     |
-| Database     | SQLite (file: `database/database.sqlite`)   |
+| Database     | MySQL (development) / in-memory SQLite (tests) |
 | Auth         | Laravel Sanctum (Bearer tokens)             |
 | Testing      | PHPUnit (Feature tests)                     |
 | Code style   | Laravel Pint                                |
@@ -45,23 +45,28 @@ users.
 ```
 users ──1:N── leads ──1:N── lead_followups
 users ──N:M── roles            (via user_role)
-options ─────────────── lookup table (LEAD_STATUS, LEAD_SOURCE, FOLLOWUP_STATUS)
+users ──N:1── options          (status_id → USER_STATUS lookup)
+options ─────────────── lookup table (USER_STATUS, LEAD_STATUS, LEAD_SOURCE, FOLLOWUP_STATUS)
 ```
 
 | Table            | Purpose                                                            |
 | ---------------- | ------------------------------------------------------------------ |
-| `users`          | System users: `name, email (unique), phone, status`                |
+| `users`          | System users: `name, email (unique), phone, status_id`             |
 | `roles`          | `ADMIN`, `SALES`                                                   |
 | `user_role`      | Many-to-many pivot between `users` and `roles`                     |
-| `options`        | Maintained lookup values (lead statuses, sources, follow-up statuses) |
+| `options`        | Maintained lookup values (user/lead statuses, sources, follow-up statuses) |
 | `leads`          | `lead_code (unique), customer_name, email, phone, source, assigned_to, status, remarks` |
 | `lead_followups` | `lead_id, followup_date, notes, status, created_by`                |
 
 All relations use foreign keys with sensible `ON DELETE` behaviour
 (`nullOnDelete` for optional assignees/creators, `cascadeOnDelete` for
-children). Indexes exist on frequently filtered columns (`email`, `status`,
-`source`, `assigned_to`, `lead_id`) and `options` has a unique
-`(category, value)` constraint.
+children, `restrictOnDelete` for lookups). Indexes exist on frequently
+filtered columns (`email`, `status`, `source`, `assigned_to`, `lead_id`,
+`status_id`) and `options` has a unique `(category, value)` constraint.
+
+User status is **lookup-driven**: `users.status_id` stores the id of the
+matching `options` row in the `USER_STATUS` category (`ACTIVE`, `INACTIVE`).
+The API resolves it back to the value code (`ACTIVE`/`INACTIVE`) in responses.
 
 ## Business Rules
 
@@ -102,9 +107,10 @@ children). Indexes exist on frequently filtered columns (`email`, `status`,
 
 ### Prerequisites
 
-- PHP >= 8.2 with `pdo_sqlite` and `sqlite3` extensions enabled.
+- PHP >= 8.2 with the `pdo_mysql` extension (web server) and `pdo_sqlite`
+  extension (required to run the test suite).
+- MySQL server (Laragon ships with one) with a database created for the app.
 - Composer.
-- (Optional) Laragon / XAMPP.
 
 ### Steps
 
@@ -112,32 +118,54 @@ children). Indexes exist on frequently filtered columns (`email`, `status`,
 # 1. Install dependencies
 composer install
 
-# 2. Copy environment file and generate key
+# 2. Copy the environment file and generate the key
 copy .env.example .env        # Windows
 # cp .env.example .env        # Unix/macOS
 php artisan key:generate
+```
 
-# 3. Make sure the SQLite database exists
-# (the .env uses DB_CONNECTION=sqlite, DB_DATABASE=database/database.sqlite)
-# The file already exists in the repo. To recreate it:
-type nul > database\database.sqlite   # Windows (do not run if the file already has data)
+```ini
+# 3. Configure the database in .env
+APP_URL=http://localhost/CRM_Lead_Managment
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=crm_management
+DB_USERNAME=root
+DB_PASSWORD=root
+```
 
-# 4. Run migrations and seeders
-php artisan migrate:fresh --seed
+Create the database (the default Laragon MySQL credentials are `root`/`root`):
 
-# 5. Start the dev server
+```sql
+CREATE DATABASE crm_management CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
+
+```bash
+# 4. Run the migrations and seed the database
+php artisan migrate --seed
+
+# 5. Serve the app
+# Option A - Laragon: copy the project into C:\laragon\www and visit
+#     http://localhost/CRM_Lead_Managment/
+# Option B - PHP dev server
 php artisan serve
 ```
 
-The API is available at `http://localhost:8000/api`.
+The API is available at:
 
-> **Laragon note:** if you get `could not find driver (Connection: sqlite)`,
-> enable `extension=pdo_sqlite` in the `php.ini` used by your web server
-> (e.g. `C:\laragon\bin\php\<version>\php.ini`) and restart the server.
+- Laragon: `http://localhost/CRM_Lead_Managment/api`
+- `php artisan serve`: `http://localhost:8000/api`
+
+> **Laragon note:** if you get `could not find driver (Connection: mysql)`,
+> enable `extension=pdo_mysql` in `C:\laragon\bin\php\<version>\php.ini` and
+> restart the server. For the test suite you also need `extension=pdo_sqlite`
+> enabled in the PHP CLI build (`php --ini` to find the active `php.ini`).
 
 ## Seed Data & Login
 
-The seeder creates the roles, the lookup `options` and four users:
+The seeder creates the roles, the lookup `options` (including `USER_STATUS`
+with `ACTIVE` / `INACTIVE`) and four users:
 
 | Email                  | Password  | Role     | Status   |
 | ---------------------- | --------- | -------- | -------- |
@@ -153,6 +181,8 @@ curl -X POST http://localhost:8000/api/login \
   -H "Content-Type: application/json" \
   -d '{"email":"admin@example.com","password":"password"}'
 ```
+
+(With Laragon the URL is `http://localhost/CRM_Lead_Managment/api/login`.)
 
 The response contains a Bearer token. Send it on every protected request:
 
@@ -208,12 +238,18 @@ store the returned token in the `token` variable automatically.
 
 ## Assumptions & Decisions
 
-- **`options` table as source of truth.** Lead statuses, lead sources and
-  follow-up statuses are maintained in the `options` table and seeded from the
-  constant classes (`App\Models\LeadStatus`, `LeadSource`, `FollowupStatus`).
-  The `leads.status` / `leads.source` columns store the value code (e.g.
-  `NEW`, `WEBSITE`) which is validated against the constants. This keeps rows
-  readable while still being driven by configurable lookup data.
+- **`options` table as source of truth.** User statuses, lead statuses, lead
+  sources and follow-up statuses are maintained in the `options` table and
+  seeded from the constant classes (`App\Models\User`, `LeadStatus`,
+  `LeadSource`, `FollowupStatus`). `users` stores the id of the matching option
+  (`status_id`) with a foreign key back to `options`, and the API resolves it
+  back to the value code (`ACTIVE`/`INACTIVE`) in responses. The `leads.status` /
+  `leads.source` columns store the value code (e.g. `NEW`, `WEBSITE`) which is
+  validated against the constants. This keeps rows readable while still being
+  driven by configurable lookup data.
+- **Database choice.** MySQL is used for development/local runs (matching the
+  assignment's intended stack) while the automated test suite runs against an
+  in-memory SQLite database for speed and isolation (`phpunit.xml`).
 - **Email uniqueness scope.** Email must be unique per *active* lead only (not
   globally), matching requirement 3.2. Emails are normalized to lowercase.
 - **Creation status.** When creating a lead the status defaults to `NEW`; a
