@@ -28,38 +28,45 @@ class DatabaseSeeder extends Seeder
             ->where('value', User::STATUS_INACTIVE)
             ->value('id');
 
-        $admin = User::factory()->create([
-            'name' => 'Admin User',
-            'email' => 'admin@example.com',
-            'phone' => '+1 555-0100',
-            'status_id' => $activeStatusId,
-        ]);
-        $admin->roles()->attach(Role::where('name', Role::ADMIN)->value('id'));
+        $users = [
+            'admin@example.com' => [
+                'name' => 'Admin User',
+                'phone' => '+1 555-0100',
+                'status_id' => $activeStatusId,
+                'role' => Role::ADMIN,
+            ],
+            'sales@example.com' => [
+                'name' => 'Sales User',
+                'phone' => '+1 555-0101',
+                'status_id' => $activeStatusId,
+                'role' => Role::SALES,
+            ],
+            'sales2@example.com' => [
+                'name' => 'Sales User Two',
+                'phone' => '+1 555-0102',
+                'status_id' => $activeStatusId,
+                'role' => Role::SALES,
+            ],
+            'inactive@example.com' => [
+                'name' => 'Inactive Sales',
+                'phone' => '+1 555-0103',
+                'status_id' => $inactiveStatusId,
+                'role' => Role::SALES,
+            ],
+        ];
 
-        $sales = User::factory()->create([
-            'name' => 'Sales User',
-            'email' => 'sales@example.com',
-            'phone' => '+1 555-0101',
-            'status_id' => $activeStatusId,
-        ]);
-        $sales->roles()->attach(Role::where('name', Role::SALES)->value('id'));
+        foreach ($users as $email => $attributes) {
+            $user = User::updateOrCreate(
+                ['email' => $email],
+                [
+                    'name' => $attributes['name'],
+                    'phone' => $attributes['phone'],
+                    'status_id' => $attributes['status_id'],
+                    'password' => 'password',
+                ]
+            );
 
-        // A second sales user used to demonstrate role based scoping.
-        $salesTwo = User::factory()->create([
-            'name' => 'Sales User Two',
-            'email' => 'sales2@example.com',
-            'phone' => '+1 555-0102',
-            'status_id' => $activeStatusId,
-        ]);
-        $salesTwo->roles()->attach(Role::where('name', Role::SALES)->value('id'));
-
-        // An inactive sales user used to demonstrate the assignment rule.
-        $inactive = User::factory()->create([
-            'name' => 'Inactive Sales',
-            'email' => 'inactive@example.com',
-            'phone' => '+1 555-0103',
-            'status_id' => $inactiveStatusId,
-        ]);
-        $inactive->roles()->attach(Role::where('name', Role::SALES)->value('id'));
+            $user->roles()->sync([Role::where('name', $attributes['role'])->value('id')]);
+        }
     }
 }
